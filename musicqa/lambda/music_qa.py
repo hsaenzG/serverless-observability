@@ -1,61 +1,123 @@
 import json
 import os
 import boto3
-import aws_xray_sdk.core
-from aws_xray_sdk.core import xray_recorder
-from aws_xray_sdk.core import patch_all
+import time
+from aws_xray_sdk.core import patch_all, xray_recorder
+from aws_xray_sdk.core import patch
+import logging
 
-# Initialize X-Ray
-patch_all()
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
-# Initialize Bedrock client
+# Initialize AWS clients
 bedrock = boto3.client('bedrock-runtime', region_name='us-east-1')
+cloudwatch = boto3.client('cloudwatch')
 
+# Configure X-Ray
+patch_all()
+patch(['boto3'])
+
+
+@xray_recorder.capture('handler')
 def handler(event, context):
     try:
-        print(f'Event: {event}')  # Debugging log
+        logger.info(f'Event received: {event}')
+
+        # Start measuring request duration
+        start_time = time.time()
 
         # Extract question from the request
-        body = json.loads(event.get('body', '{}'))
+        body = event.get('body', '{}')
+        if isinstance(body, str):  
+            body = json.loads(body)  # Only parse if it's a string
+
         question = body.get('question', '').strip()
 
-        print(f'Question: {question}')  # Debugging log
-        
+        logger.info(f'Processing question: {question}')
+
         if not question:
+            logger.warning('Empty question received')
+            cloudwatch.put_metric_data(
+                Namespace='MusicQA',
+                MetricData=[{
+                    'MetricName': 'InvalidRequests',
+                    'Value': 1,
+                    'Unit': 'Count'
+                }]
+            )
             return {
                 'statusCode': 400,
+                'headers': {'Content-Type': 'application/json'},
                 'body': json.dumps({'error': 'Question is required'})
             }
 
-        # ✅ Corrected Claude v2 request format
         payload = {
-            "anthropic_version": "bedrock-2023-05-31",  # Required field
+            "anthropic_version": "bedrock-2023-05-31",
             "messages": [
-                {"role": "user", "content": question}  # Claude requires "user" as the first message
+                {"role": "user", "content": question}
             ],
             "max_tokens": 300,
             "temperature": 0.7
         }
 
-        print(f'Payload: {json.dumps(payload, indent=2)}')  # Debugging log
-        
-        # Call Bedrock
-        response = bedrock.invoke_model(
-            modelId="anthropic.claude-v2",  # Using Claude v2 model
-            contentType="application/json",  # ✅ Explicitly set content type
-            accept="application/json",
-            body=json.dumps(payload)
+        logger.debug(f'Bedrock payload: {json.dumps(payload, indent=2)}')
+
+        # Create X-Ray subsegment for Bedrock API call
+        subsegment = xray_recorder.begin_subsegment('bedrock_invoke_model')
+
+        try:
+            response = bedrock.invoke_model(
+                modelId="anthropic.claude-v2",
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps(payload)
+            )
+
+            # Read and parse the response properly
+            response_body = json.loads(response['body'].read().decode("utf-8"))
+            logger.info(f"Raw Bedrock Response: {json.dumps(response_body, indent=2)}")
+
+            # Extract answer safely
+            answer = "Sorry, I could not generate an answer."
+            if "content" in response_body and isinstance(response_body["content"], list):
+                # Extract text from the first content block
+                answer = response_body["content"][0].get("text", answer)
+
+            subsegment.put_annotation('BedrockResponse', json.dumps(response_body))
+
+        except Exception as e:
+            subsegment.add_exception(e)
+            logger.error(f"Error invoking Bedrock model: {str(e)}", exc_info=True)
+            raise e  # Ensure the error propagates properly
+
+        finally:
+            xray_recorder.end_subsegment()  # Manually close the subsegment
+
+        # Calculate request duration and record metrics
+        duration = time.time() - start_time
+        logger.info(f'Request processed in {duration:.2f} seconds')
+
+        # Record CloudWatch metrics
+        cloudwatch.put_metric_data(
+            Namespace='MusicQA',
+            MetricData=[
+                {
+                    'MetricName': 'RequestLatency',
+                    'Value': duration,
+                    'Unit': 'Seconds'
+                },
+                {
+                    'MetricName': 'SuccessfulRequests',
+                    'Value': 1,
+                    'Unit': 'Count'
+                }
+            ]
         )
-        
-        # Parse Bedrock response
-        response_body = json.loads(response['body'].read().decode("utf-8"))
-        answer = response_body.get("content", "Sorry, I could not generate an answer.")
 
         return {
             'statusCode': 200,
-            'headers': {
-                'Content-Type': 'application/json'
-            },
+            'headers': {'Content-Type': 'application/json'},
             'body': json.dumps({
                 'question': question,
                 'answer': answer
@@ -63,8 +125,9 @@ def handler(event, context):
         }
 
     except Exception as e:
-        print(f'Error: {str(e)}')  # Debugging log
+        logger.error(f"Error: {str(e)}", exc_info=True)  # Improved error logging
         return {
             'statusCode': 500,
+            'headers': {'Content-Type': 'application/json'},
             'body': json.dumps({'error': 'Internal server error'})
         }

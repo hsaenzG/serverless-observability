@@ -1,11 +1,11 @@
 # Serverless-observability
-# Demo - MusicQA: AI-Powered Music Question Answering System
+# Demo - MusicQA: AI-Powered Music Question Answering System - AWS Native Observability
 
 MusicQA is an AI-powered system that answers questions about music using AWS services and the CDK (Cloud Development Kit) for infrastructure deployment.
 
 This project implements a serverless architecture to process user queries about music, leveraging natural language processing and a knowledge base to provide accurate and informative responses. The system is designed to scale automatically and handle a wide range of music-related questions efficiently.
 
-## Repository Structure
+## Repository Structureß
 
 The repository is organized as follows:
 
@@ -14,10 +14,6 @@ The repository is organized as follows:
 - `requirements.txt`: Python dependencies for the project.
 - `musicqa/`: Directory containing the main application code.
   - `musicqa_stack.py`: Defines the AWS resources using CDK constructs.
-- `aws_xray_sdk/`: Directory containing the AWS X-Ray SDK for Python.
-- `botocore/`: Directory containing the Botocore library, which is a low-level interface to AWS services.
-- `bin/`: Directory containing utility scripts.
-  - `jp.py`: A command-line interface for the JMESPath library.
 - `source.bat`: Windows batch script for activating the Python virtual environment.
 
 ## Usage Instructions
@@ -31,12 +27,12 @@ The repository is organized as follows:
    ```
 3. Clone this repository:
    ```
-   git clone https://github.com/your-repo/musicqa.git
+   git clone https://github.com/caylent/serverless-observability.git
    cd musicqa
    ```
 4. Create and activate a virtual environment:
    ```
-   python -m venv .venv
+   python3 -m venv .venv
    source .venv/bin/activate  # On Windows, use `.venv\Scripts\activate`
    ```
 5. Install the required dependencies:
@@ -91,9 +87,27 @@ The project uses AWS CDK to define and deploy the following resources:
 
 - Lambda: Processes questions and generates responses.
 - API Gateway: Provides the HTTP endpoint for user interactions.
-- DynamoDB: Stores the music knowledge base (optional, depending on implementation).
-- Amazon Kendra: Provides intelligent search capabilities (optional, depending on implementation).
 - CloudWatch: Monitors and logs system activities.
 - IAM: Manages permissions for the various components.
 
 The exact resources and their configurations are defined in the `musicqa_stack.py` file.
+
+## Observability with AWS Services
+
+This project leverages AWS-native observability services to monitor and analyze the performance of the serverless functions:
+
+- Amazon CloudWatch: Logs function invocations, errors, and custom metrics.
+- AWS X-Ray: Provides tracing and debugging insights for Lambda executions.
+- Amazon CloudWatch Alarms: Alerts on anomalous behavior and potential issues.
+
+## Enabling Observability
+
+1. Ensure that CloudWatch logs and X-Ray tracing are enabled for all Lambda functions in the musicqa_stack.py file.
+
+2. Access CloudWatch logs to monitor function execution:
+```
+aws logs tail /aws/lambda/musicqa-function --follow
+```
+3. Use the AWS X-Ray console to visualize traces and detect performance bottlenecks.
+
+By integrating AWS observability tools, the system gains visibility into execution performance, error handling, and latency analysis, ensuring a robust and scalable serverless solution.
